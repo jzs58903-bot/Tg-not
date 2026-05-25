@@ -10,7 +10,7 @@ if (!token) {
 
 const bot = new TelegramBot(token, { polling: true });
 
-// CoinGecko 支持的币种 ID 映射 (小写)
+// CoinGecko 支持的币种映射（小写 ID）
 const coinMap = {
     'BTC': 'bitcoin',
     'ETH': 'ethereum',
@@ -27,11 +27,11 @@ bot.onText(/\/price (.+)/, async (msg, match) => {
     const coinId = coinMap[symbol];
 
     if (!coinId) {
-        bot.sendMessage(chatId, `❌ 暂不支持 ${symbol}，目前支持：BTC, ETH, BNB, SOL, XRP, DOGE, ADA`);
+        bot.sendMessage(chatId, `❌ 暂不支持 ${symbol}，支持：BTC, ETH, BNB, SOL, XRP, DOGE, ADA`);
         return;
     }
 
-    bot.sendMessage(chatId, `🔍 正在查询 ${symbol} 价格 (via CoinGecko)...`);
+    bot.sendMessage(chatId, `🔍 正在查询 ${symbol} 价格 (CoinGecko)...`);
 
     try {
         const url = `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`;
@@ -52,7 +52,7 @@ bot.onText(/\/start/, (msg) => {
     bot.sendMessage(msg.chat.id, '🤖 机器人已启动！\n支持币种：BTC, ETH, BNB, SOL, XRP, DOGE, ADA\n用法：/price BTC');
 });
 
-console.log('🚀 机器人已启动 (CoinGecko 版本)');
+console.log('🚀 机器人已启动（CoinGecko 版本）');
 
 const server = http.createServer((req, res) => res.end('ok'));
 server.listen(3000, () => console.log('HTTP server on 3000'));
