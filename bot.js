@@ -50,3 +50,6 @@ bot.onText(/\/start/, (msg) => {
 });
 
 console.log('🚀 机器人已启动（增强版）');
+const http = require('http');
+const server = http.createServer((req, res) => res.end('ok'));
+server.listen(3000, () => console.log('HTTP server on 3000'));
