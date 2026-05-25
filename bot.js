@@ -1,5 +1,6 @@
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
+const http = require('http');
 
 const token = process.env.BOT_TOKEN;
 if (!token) {
@@ -9,47 +10,49 @@ if (!token) {
 
 const bot = new TelegramBot(token, { polling: true });
 
+// CoinGecko 支持的币种 ID 映射 (小写)
+const coinMap = {
+    'BTC': 'bitcoin',
+    'ETH': 'ethereum',
+    'BNB': 'binancecoin',
+    'SOL': 'solana',
+    'XRP': 'ripple',
+    'DOGE': 'dogecoin',
+    'ADA': 'cardano'
+};
+
 bot.onText(/\/price (.+)/, async (msg, match) => {
     const symbol = match[1].toUpperCase();
     const chatId = msg.chat.id;
+    const coinId = coinMap[symbol];
 
-    // 立即回复一个“查询中...”避免用户重复发送
-    bot.sendMessage(chatId, `🔍 正在查询 ${symbol}USDT ...`);
+    if (!coinId) {
+        bot.sendMessage(chatId, `❌ 暂不支持 ${symbol}，目前支持：BTC, ETH, BNB, SOL, XRP, DOGE, ADA`);
+        return;
+    }
+
+    bot.sendMessage(chatId, `🔍 正在查询 ${symbol} 价格 (via CoinGecko)...`);
 
     try {
-        // 方法1：使用 Binance 公共 API
-        const url = `https://api.binance.com/api/v3/ticker/price?symbol=${symbol}USDT`;
+        const url = `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`;
         const response = await axios.get(url, { timeout: 10000 });
-        
-        if (response.data && response.data.price) {
-            const price = parseFloat(response.data.price).toFixed(2);
-            bot.sendMessage(chatId, `💰 ${symbol}USDT 现价：${price} USDT`);
+        const price = response.data[coinId]?.usd;
+        if (price) {
+            bot.sendMessage(chatId, `💰 ${symbol} 现价：$${price.toFixed(2)} USD`);
         } else {
-            bot.sendMessage(chatId, `❌ API 返回数据异常：${JSON.stringify(response.data)}`);
+            bot.sendMessage(chatId, `❌ 未获取到价格，请稍后再试`);
         }
     } catch (error) {
-        console.error('API 错误详情:', error.message);
-        // 将详细错误信息发给用户（帮助调试）
-        let errorMsg = `❌ 获取失败\n`;
-        if (error.response) {
-            // Binance 返回了错误状态码（比如 404）
-            errorMsg += `状态码: ${error.response.status}\n`;
-            errorMsg += `错误内容: ${JSON.stringify(error.response.data)}`;
-        } else if (error.request) {
-            // 请求发出但没有收到响应（网络问题）
-            errorMsg += `网络问题：未收到 Binance 响应\n${error.message}`;
-        } else {
-            errorMsg += `请求错误：${error.message}`;
-        }
-        bot.sendMessage(chatId, errorMsg);
+        console.error('CoinGecko 错误:', error.message);
+        bot.sendMessage(chatId, `❌ 网络错误，请稍后重试\n详情：${error.message}`);
     }
 });
 
 bot.onText(/\/start/, (msg) => {
-    bot.sendMessage(msg.chat.id, '🤖 机器人已启动！试试 /price BTC\n如果出错，我会告诉你具体原因。');
+    bot.sendMessage(msg.chat.id, '🤖 机器人已启动！\n支持币种：BTC, ETH, BNB, SOL, XRP, DOGE, ADA\n用法：/price BTC');
 });
 
-console.log('🚀 机器人已启动（增强版）');
-const http = require('http');
+console.log('🚀 机器人已启动 (CoinGecko 版本)');
+
 const server = http.createServer((req, res) => res.end('ok'));
 server.listen(3000, () => console.log('HTTP server on 3000'));
