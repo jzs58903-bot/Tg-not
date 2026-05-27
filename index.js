@@ -347,7 +347,7 @@ bot.on('message', async (msg) => {
 
     const chatId = msg.chat.id;
 
-    await bot.sendMessage(
+    const loadingMsg = await bot.sendMessage(
         chatId,
         '🤖 AI分析中...'
     );
@@ -381,6 +381,8 @@ bot.on('message', async (msg) => {
             .message
             .content;
 
+        await bot.deleteMessage(chatId, loadingMsg.message_id);
+
         await bot.sendMessage(
             chatId,
             reply
@@ -389,6 +391,8 @@ bot.on('message', async (msg) => {
     } catch (e) {
 
         console.log('❌ 聊天错误:', e.message);
+
+        await bot.deleteMessage(chatId, loadingMsg.message_id);
 
         await bot.sendMessage(
             chatId,
