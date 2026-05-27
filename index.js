@@ -5,40 +5,35 @@ const express = require('express');
 
 const app = express();
 
-// =========================
+// ======================
 // 环境变量
-// =========================
+// ======================
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
 
-if (!BOT_TOKEN) {
-    console.log("❌ 缺少 BOT_TOKEN");
+if (!BOT_TOKEN || !DEEPSEEK_API_KEY) {
+    console.log("❌ 缺少环境变量");
     process.exit(1);
 }
 
-if (!DEEPSEEK_API_KEY) {
-    console.log("❌ 缺少 DEEPSEEK_API_KEY");
-    process.exit(1);
-}
-
-// =========================
-// Telegram Bot
-// =========================
+// ======================
+// Telegram
+// ======================
 const bot = new TelegramBot(BOT_TOKEN, {
     polling: true
 });
 
-// =========================
-// DeepSeek Client
-// =========================
+// ======================
+// DeepSeek
+// ======================
 const deepseek = new OpenAI({
     baseURL: 'https://api.deepseek.com',
     apiKey: DEEPSEEK_API_KEY,
 });
 
-// =========================
+// ======================
 // 支持币种
-// =========================
+// ======================
 const coinMap = {
     BTC: 'bitcoin',
     ETH: 'ethereum',
@@ -49,24 +44,44 @@ const coinMap = {
     ADA: 'cardano'
 };
 
-// =========================
-// 获取币价
-// =========================
-async function getCoinPrice(symbol) {
+// ======================
+// 获取市场数据
+// ======================
+async function getMarketData(symbol) {
+
     const coinId = coinMap[symbol];
 
     if (!coinId) return null;
 
-    const url = `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd&include_24hr_change=true`;
+    try {
 
-    const response = await axios.get(url);
+        const url =
+            `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${coinId}`;
 
-    return response.data[coinId];
+        const response = await axios.get(url);
+
+        const data = response.data[0];
+
+        return {
+            symbol,
+            price: data.current_price,
+            marketCap: data.market_cap,
+            volume: data.total_volume,
+            change24h: data.price_change_percentage_24h,
+            athChange: data.ath_change_percentage
+        };
+
+    } catch (error) {
+
+        console.log("CoinGecko错误：", error.message);
+
+        return null;
+    }
 }
 
-// =========================
-// AI分析函数
-// =========================
+// ======================
+// AI分析
+// ======================
 async function getAIAnalysis(userMessage) {
 
     try {
@@ -75,64 +90,88 @@ async function getAIAnalysis(userMessage) {
         let symbol = null;
 
         for (const coin of Object.keys(coinMap)) {
+
             if (userMessage.toUpperCase().includes(coin)) {
                 symbol = coin;
                 break;
             }
         }
 
-        let marketInfo = "";
+        let marketInfo = "未识别到币种";
 
-        // 如果识别到币种 → 自动获取行情
+        // 获取市场数据
         if (symbol) {
 
-            const data = await getCoinPrice(symbol);
+            const data = await getMarketData(symbol);
 
             if (data) {
+
                 marketInfo = `
-币种：${symbol}
-当前价格：$${data.usd}
-24小时涨跌幅：${data.usd_24h_change?.toFixed(2)}%
+币种: ${data.symbol}
+
+当前价格:
+$${data.price}
+
+24h涨跌:
+${data.change24h.toFixed(2)}%
+
+市值:
+$${data.marketCap.toLocaleString()}
+
+24h成交量:
+$${data.volume.toLocaleString()}
+
+距离历史最高点:
+${data.athChange.toFixed(2)}%
 `;
             }
         }
 
-        const completion = await deepseek.chat.completions.create({
+        const completion =
+            await deepseek.chat.completions.create({
 
-            model: "deepseek-chat",
+                model: "deepseek-chat",
 
-            messages: [
+                messages: [
 
-                {
-                    role: "system",
-                    content: `
-你是专业加密货币交易分析师。
+                    {
+                        role: "system",
+                        content: `
+你是专业加密货币交易员。
+
+请根据市场数据分析：
+
+1. 当前趋势
+2. 风险等级
+3. 是否适合短线
+4. 支撑阻力
+5. 是否适合追高
 
 要求：
 
-1. 先一句话总结结论
-2. 再分析趋势
-3. 给出风险提示
-4. 用中文回答
-5. 专业但简洁
+- 用中文
+- 专业
+- 简洁
+- 像真实交易员
+- 先给一句总结
 `
-                },
+                    },
 
-                {
-                    role: "user",
-                    content: `
-用户问题：
+                    {
+                        role: "user",
+                        content: `
+用户问题:
 ${userMessage}
 
-市场数据：
+市场数据:
 ${marketInfo}
 `
-                }
+                    }
 
-            ],
+                ],
 
-            temperature: 0.7,
-        });
+                temperature: 0.7,
+            });
 
         return completion.choices[0].message.content;
 
@@ -144,69 +183,72 @@ ${marketInfo}
     }
 }
 
-// =========================
+// ======================
 // /start
-// =========================
+// ======================
 bot.onText(/\/start/, async (msg) => {
 
     const text = `
-🤖 AI交易顾问机器人
+🤖 AI交易Agent
+
+直接发送：
+
+- 分析BTC
+- ETH能买吗
+- SOL趋势怎么样
+- DOGE风险大吗
 
 功能：
 
-/price BTC  查询价格
-
-直接发送：
-- 分析BTC
-- ETH现在能买吗
-- SOL趋势怎么样
-
-我会自动分析市场。
+✅ AI分析
+✅ 市场数据
+✅ 风险评级
+✅ 趋势分析
 `;
 
     bot.sendMessage(msg.chat.id, text);
 });
 
-// =========================
+// ======================
 // /price
-// =========================
+// ======================
 bot.onText(/\/price (.+)/, async (msg, match) => {
 
     const chatId = msg.chat.id;
 
     const symbol = match[1].toUpperCase();
 
-    try {
+    const data = await getMarketData(symbol);
 
-        const data = await getCoinPrice(symbol);
+    if (!data) {
 
-        if (!data) {
+        bot.sendMessage(chatId, "❌ 不支持币种");
 
-            bot.sendMessage(chatId, "❌ 不支持该币种");
+        return;
+    }
 
-            return;
-        }
+    const message = `
+💰 ${symbol} 市场数据
 
-        const message = `
-💰 ${symbol} 行情
+价格:
+$${data.price}
 
-价格：$${data.usd}
+24h涨跌:
+${data.change24h.toFixed(2)}%
 
-24h涨跌：
-${data.usd_24h_change.toFixed(2)}%
+市值:
+$${data.marketCap.toLocaleString()}
+
+24h成交量:
+$${data.volume.toLocaleString()}
 `;
 
-        bot.sendMessage(chatId, message);
-
-    } catch (error) {
-
-        bot.sendMessage(chatId, "❌ 获取价格失败");
-    }
+    bot.sendMessage(chatId, message);
 });
 
-// =========================
+// ======================
 // 普通聊天
-// =========================
+// ======================
 bot.on('message', async (msg) => {
 
     const text = msg.text;
@@ -218,8 +260,7 @@ bot.on('message', async (msg) => {
 
     const chatId = msg.chat.id;
 
-    // 先发送“思考中”
-    const waitingMsg = await bot.sendMessage(chatId, "🤔 AI分析中...");
+    await bot.sendMessage(chatId, "🤖 AI分析中...");
 
     const reply = await getAIAnalysis(text);
 
@@ -234,17 +275,16 @@ bot.on('message', async (msg) => {
             "❌ AI服务暂时不可用"
         );
     }
-
 });
 
-// =========================
+// ======================
 // Render 保活
-// =========================
+// ======================
 app.get('/', (req, res) => {
-    res.send('Bot Running');
+    res.send('AI Trading Agent Running');
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
 app.listen(PORT, () => {
     console.log(`🚀 Server running on ${PORT}`);
