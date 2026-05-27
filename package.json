@@ -1,13 +1,8 @@
 {
-  "name": "tg-not",
+  "name": "ai-trading-bot",
   "version": "1.0.0",
-  "main": "bot.js",
+  "main": "index.js",
   "scripts": {
-    "start": "node bot.js"
-  },
-  "dependencies": {
-    "node-telegram-bot-api": "^0.61.0",
-    "axios": "^1.6.0",
-    "openai": "^4.0.0"
+    "start": "node index.js"
   }
 }
