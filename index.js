@@ -1,304 +1,440 @@
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
+const http = require('http');
 const OpenAI = require('openai');
-const express = require('express');
 const { RSI } = require('technicalindicators');
 
-const app = express();
-
-// ======================
+// =========================
 // 环境变量
-// ======================
+// =========================
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
+// =========================
+// 你的 Telegram CHAT_ID
+// =========================
+const CHAT_ID = '7181633439';
+
+// =========================
+// 检查环境变量
+// =========================
 if (!BOT_TOKEN || !OPENROUTER_API_KEY) {
-    console.log("❌ 缺少环境变量");
+    console.log('❌ 缺少环境变量');
     process.exit(1);
 }
 
-// ======================
-// Telegram
-// ======================
+// =========================
+// Telegram Bot
+// =========================
 const bot = new TelegramBot(BOT_TOKEN, {
     polling: true
 });
 
-// ======================
-// OpenRouter
-// ======================
-const ai = new OpenAI({
+// =========================
+// OpenRouter AI
+// =========================
+const openai = new OpenAI({
     baseURL: 'https://openrouter.ai/api/v1',
-    apiKey: OPENROUTER_API_KEY,
+    apiKey: OPENROUTER_API_KEY
 });
 
-// ======================
-// 你的 Telegram ID
-// ======================
+console.log('🤖 AI合约监控Agent已启动');
 
-// 先随便给机器人发一句话
-// 然后访问：
-// https://api.telegram.org/bot你的TOKEN/getUpdates
-
-const CHAT_ID = '你的CHAT_ID';
-
-// ======================
-// 获取币安合约行情
-// ======================
-async function getTicker(symbol) {
+// =========================
+// 自动获取高成交量币种
+// =========================
+async function getTopSymbols() {
 
     try {
 
         const url =
-            `https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=${symbol}`;
+            'https://fapi.binance.com/fapi/v1/ticker/24hr';
 
-        const response = await axios.get(url);
+        const res = await axios.get(url);
 
-        return response.data;
+        const data = res.data;
 
-    } catch (error) {
+        // 过滤
+        const filtered = data.filter(item => {
 
-        return null;
+            const volume =
+                parseFloat(item.quoteVolume);
+
+            return (
+                item.symbol.endsWith('USDT') &&
+                volume > 1000000 && // 100万美元以上
+                !item.symbol.includes('BUSD') &&
+                !item.symbol.includes('USDC')
+            );
+        });
+
+        // 按成交量排序
+        filtered.sort((a, b) =>
+            parseFloat(b.quoteVolume) -
+            parseFloat(a.quoteVolume)
+        );
+
+        // 取前50
+        return filtered
+            .slice(0, 50)
+            .map(item => item.symbol);
+
+    } catch (e) {
+
+        console.log('❌ 获取币种失败');
+
+        return [];
     }
 }
 
-// ======================
+// =========================
 // 获取K线
-// ======================
+// =========================
 async function getKlines(symbol) {
 
     try {
 
         const url =
-            `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=5m&limit=30`;
+            `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=5m&limit=100`;
 
-        const response = await axios.get(url);
+        const res = await axios.get(url);
 
-        return response.data;
+        return res.data;
 
-    } catch (error) {
+    } catch (e) {
+
+        console.log(`❌ ${symbol} K线失败`);
 
         return null;
     }
 }
 
-// ======================
+// =========================
 // AI分析
-// ======================
-async function getAIAnalysis(data) {
+// =========================
+async function aiAnalysis(symbol, price, change, rsi) {
 
     try {
 
-        const completion =
-            await ai.chat.completions.create({
-
-                model: "deepseek/deepseek-chat-v3-0324:free",
-
-                messages: [
-
-                    {
-                        role: "system",
-                        content: `
-你是专业合约交易员。
+        const prompt = `
+你是专业加密货币交易员。
 
 请分析：
 
-1. 是否是假突破
-2. 是否适合追高
-3. 风险等级
-4. 短线趋势
-
-回答简洁专业。
-`
-                    },
-
-                    {
-                        role: "user",
-                        content: `
-交易对:
-${data.symbol}
+币种:
+${symbol}
 
 价格:
-${data.price}
+${price}
 
-涨幅:
-${data.change}%
-
-成交量倍数:
-${data.volumeRatio}
+5分钟涨跌:
+${change}%
 
 RSI:
-${data.rsi}
-`
-                    }
+${rsi}
 
+请输出：
+
+1. 趋势
+2. 风险
+3. 是否适合追多
+4. 是否可能回调
+
+控制在100字内。
+`;
+
+        const completion =
+            await openai.chat.completions.create({
+
+                model:
+                    'deepseek/deepseek-chat-v3-0324:free',
+
+                messages: [
+                    {
+                        role: 'user',
+                        content: prompt
+                    }
                 ]
             });
 
-        return completion.choices[0].message.content;
+        return completion
+            .choices[0]
+            .message
+            .content;
 
-    } catch (error) {
+    } catch (e) {
 
-        console.log(error.message);
+        console.log('❌ AI错误:', e.message);
 
-        return "AI分析失败";
+        return 'AI分析失败';
     }
 }
 
-// ======================
-// 扫描器
-// ======================
+// =========================
+// 防重复报警
+// =========================
+const alertCache = new Map();
+
+// =========================
+// 市场扫描
+// =========================
 async function scanMarket() {
 
-    console.log("🔍 扫描市场...");
+    console.log('🔍 扫描市场...');
 
-    const symbols = [
-        'BTCUSDT',
-        'ETHUSDT',
-        'SOLUSDT',
-        'DOGEUSDT',
-        'XRPUSDT'
-    ];
+    // 自动获取币种
+    const symbols = await getTopSymbols();
+
+    console.log(`📊 扫描币种数量: ${symbols.length}`);
 
     for (const symbol of symbols) {
 
         try {
 
-            const ticker = await getTicker(symbol);
+            const klines =
+                await getKlines(symbol);
 
-            const klines = await getKlines(symbol);
+            if (!klines) continue;
 
-            if (!ticker || !klines) continue;
+            const closes =
+                klines.map(k =>
+                    parseFloat(k[4])
+                );
 
-            // 价格
-            const price = parseFloat(ticker.lastPrice);
-
-            // 24h涨跌
-            const change =
-                parseFloat(ticker.priceChangePercent);
-
-            // 成交量
             const volumes =
-                klines.map(k => parseFloat(k[5]));
+                klines.map(k =>
+                    parseFloat(k[5])
+                );
 
-            const avgVolume =
-                volumes.reduce((a, b) => a + b, 0) / volumes.length;
+            // 当前价格
+            const last =
+                closes[closes.length - 1];
 
-            const lastVolume =
-                volumes[volumes.length - 1];
+            // 前一根K线
+            const prev =
+                closes[closes.length - 2];
 
-            const volumeRatio =
-                (lastVolume / avgVolume).toFixed(2);
+            // 5分钟涨跌
+            const change =
+                ((last - prev) / prev) * 100;
 
             // RSI
-            const closes =
-                klines.map(k => parseFloat(k[4]));
-
-            const rsi =
+            const rsiData =
                 RSI.calculate({
                     values: closes,
                     period: 14
                 });
 
-            const lastRSI =
-                rsi[rsi.length - 1]?.toFixed(2);
+            const rsi =
+                rsiData[rsiData.length - 1];
 
-            // 条件
+            // 成交量
+            const avgVolume =
+                volumes.reduce((a, b) => a + b, 0)
+                / volumes.length;
+
+            const lastVolume =
+                volumes[volumes.length - 1];
+
+            const volumeRatio =
+                lastVolume / avgVolume;
+
+            // =========================
+            // 异动条件
+            // =========================
             const isPump =
-                change > 3 || volumeRatio > 2;
+                Math.abs(change) >= 1;
 
-            if (isPump) {
+            const isRSI =
+                rsi >= 75 || rsi <= 25;
+
+            const isVolume =
+                volumeRatio >= 2;
+
+            if (
+                isPump ||
+                isRSI ||
+                isVolume
+            ) {
+
+                // 防止重复报警
+                const now = Date.now();
+
+                const lastAlert =
+                    alertCache.get(symbol);
+
+                if (
+                    lastAlert &&
+                    now - lastAlert < 30 * 60 * 1000
+                ) {
+                    continue;
+                }
+
+                alertCache.set(symbol, now);
 
                 console.log(`🚨 ${symbol} 异动`);
 
-                const aiAnalysis =
-                    await getAIAnalysis({
+                // AI分析
+                const analysis =
+                    await aiAnalysis(
                         symbol,
-                        price,
-                        change,
-                        volumeRatio,
-                        rsi: lastRSI
-                    });
+                        last,
+                        change.toFixed(2),
+                        rsi.toFixed(2)
+                    );
 
                 const message = `
-🚨 ${symbol} 异动警报
+🚨 *${symbol} 异动警报*
 
 💰 价格:
-${price}
+${last}
 
-📈 24h涨幅:
+📈 5分钟涨跌:
 ${change.toFixed(2)}%
 
-📊 成交量倍数:
-${volumeRatio}x
+📊 RSI:
+${rsi.toFixed(2)}
 
-🔥 RSI:
-${lastRSI}
+🔥 成交量倍数:
+${volumeRatio.toFixed(2)}x
 
 🤖 AI分析:
-${aiAnalysis}
+${analysis}
 `;
 
-                await bot.sendMessage(CHAT_ID, message);
+                await bot.sendMessage(
+                    CHAT_ID,
+                    message,
+                    {
+                        parse_mode: 'Markdown'
+                    }
+                );
             }
 
-        } catch (error) {
+        } catch (e) {
 
-            console.log(error.message);
+            console.log(`❌ ${symbol} 扫描失败`);
         }
     }
 }
 
-// ======================
+// =========================
 // /start
-// ======================
+// =========================
 bot.onText(/\/start/, (msg) => {
 
     bot.sendMessage(
         msg.chat.id,
-        `
-🤖 币安合约监控Agent
+`
+🤖 AI合约监控Agent
 
 功能：
 
-✅ 自动扫描异动
+✅ 自动扫描热门合约
+✅ RSI异动检测
 ✅ 爆量检测
-✅ RSI分析
-✅ AI分析
-✅ Telegram推送
+✅ AI趋势分析
+✅ Telegram自动推送
+
+自动扫描：
+BTC
+ETH
+SOL
+PEPE
+MEME
+热门山寨
 `
     );
 });
 
-// ======================
-// 获取 CHAT_ID
-// ======================
+// =========================
+// 手动聊天
+// =========================
 bot.on('message', async (msg) => {
 
-    console.log("CHAT_ID:", msg.chat.id);
+    const text = msg.text;
+
+    if (!text) return;
+
+    if (text.startsWith('/')) return;
+
+    const chatId = msg.chat.id;
+
+    await bot.sendMessage(
+        chatId,
+        '🤖 AI分析中...'
+    );
+
+    try {
+
+        const completion =
+            await openai.chat.completions.create({
+
+                model:
+                    'deepseek/deepseek-chat-v3-0324:free',
+
+                messages: [
+
+                    {
+                        role: 'system',
+                        content:
+                            '你是专业加密货币交易员。'
+                    },
+
+                    {
+                        role: 'user',
+                        content: text
+                    }
+                ]
+            });
+
+        const reply =
+            completion
+            .choices[0]
+            .message
+            .content;
+
+        await bot.sendMessage(
+            chatId,
+            reply
+        );
+
+    } catch (e) {
+
+        console.log(e.message);
+
+        await bot.sendMessage(
+            chatId,
+            '❌ AI服务异常'
+        );
+    }
 });
 
-// ======================
-// 定时扫描
-// ======================
+// =========================
+// 每5分钟扫描一次
+// =========================
 setInterval(() => {
 
     scanMarket();
 
-}, 1000 * 60 * 5);
+}, 5 * 60 * 1000);
 
-// ======================
+// =========================
+// 启动立即扫描
+// =========================
+scanMarket();
+
+// =========================
 // Render 保活
-// ======================
-app.get('/', (req, res) => {
-    res.send('Binance Futures Agent Running');
+// =========================
+const server = http.createServer((req, res) => {
+    res.end('ok');
 });
 
-const PORT = process.env.PORT || 10000;
+const PORT =
+    process.env.PORT || 10000;
 
-app.listen(PORT, () => {
+server.listen(PORT, () => {
 
     console.log(`🚀 Server on ${PORT}`);
 });
-
-console.log("🤖 币安合约Agent已启动");
