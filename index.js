@@ -11,7 +11,7 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
 // =========================
-// 你的 Telegram CHAT_ID
+// Telegram CHAT_ID
 // =========================
 const CHAT_ID = '7181633439';
 
@@ -19,7 +19,9 @@ const CHAT_ID = '7181633439';
 // 检查环境变量
 // =========================
 if (!BOT_TOKEN || !OPENROUTER_API_KEY) {
+
     console.log('❌ 缺少环境变量');
+
     process.exit(1);
 }
 
@@ -31,17 +33,17 @@ const bot = new TelegramBot(BOT_TOKEN, {
 });
 
 // =========================
-// OpenRouter AI
+// OpenRouter
 // =========================
 const openai = new OpenAI({
     baseURL: 'https://openrouter.ai/api/v1',
     apiKey: OPENROUTER_API_KEY
 });
 
-console.log('🤖 AI合约监控Agent已启动');
+console.log('🤖 AI交易Agent启动成功');
 
 // =========================
-// 自动获取高成交量币种
+// 自动获取热门币种
 // =========================
 async function getTopSymbols() {
 
@@ -54,7 +56,6 @@ async function getTopSymbols() {
 
         const data = res.data;
 
-        // 过滤
         const filtered = data.filter(item => {
 
             const volume =
@@ -62,19 +63,17 @@ async function getTopSymbols() {
 
             return (
                 item.symbol.endsWith('USDT') &&
-                volume > 1000000 && // 100万美元以上
+                volume > 1000000 &&
                 !item.symbol.includes('BUSD') &&
                 !item.symbol.includes('USDC')
             );
         });
 
-        // 按成交量排序
         filtered.sort((a, b) =>
             parseFloat(b.quoteVolume) -
             parseFloat(a.quoteVolume)
         );
 
-        // 取前50
         return filtered
             .slice(0, 50)
             .map(item => item.symbol);
@@ -112,7 +111,12 @@ async function getKlines(symbol) {
 // =========================
 // AI分析
 // =========================
-async function aiAnalysis(symbol, price, change, rsi) {
+async function aiAnalysis(
+    symbol,
+    price,
+    change,
+    rsi
+) {
 
     try {
 
@@ -133,7 +137,7 @@ ${change}%
 RSI:
 ${rsi}
 
-请输出：
+输出：
 
 1. 趋势
 2. 风险
@@ -147,7 +151,7 @@ ${rsi}
             await openai.chat.completions.create({
 
                 model:
-                    'deepseek/deepseek-chat-v3-0324:free',
+                    'openai/gpt-3.5-turbo',
 
                 messages: [
                     {
@@ -176,16 +180,16 @@ ${rsi}
 const alertCache = new Map();
 
 // =========================
-// 市场扫描
+// 扫描市场
 // =========================
 async function scanMarket() {
 
     console.log('🔍 扫描市场...');
 
-    // 自动获取币种
-    const symbols = await getTopSymbols();
+    const symbols =
+        await getTopSymbols();
 
-    console.log(`📊 扫描币种数量: ${symbols.length}`);
+    console.log(`📊 扫描数量: ${symbols.length}`);
 
     for (const symbol of symbols) {
 
@@ -206,19 +210,15 @@ async function scanMarket() {
                     parseFloat(k[5])
                 );
 
-            // 当前价格
             const last =
                 closes[closes.length - 1];
 
-            // 前一根K线
             const prev =
                 closes[closes.length - 2];
 
-            // 5分钟涨跌
             const change =
                 ((last - prev) / prev) * 100;
 
-            // RSI
             const rsiData =
                 RSI.calculate({
                     values: closes,
@@ -228,7 +228,6 @@ async function scanMarket() {
             const rsi =
                 rsiData[rsiData.length - 1];
 
-            // 成交量
             const avgVolume =
                 volumes.reduce((a, b) => a + b, 0)
                 / volumes.length;
@@ -240,24 +239,11 @@ async function scanMarket() {
                 lastVolume / avgVolume;
 
             // =========================
-            // 异动条件
+            // 测试模式
             // =========================
-            const isPump =
-                Math.abs(change) >= 1;
 
-            const isRSI =
-                rsi >= 75 || rsi <= 25;
+            if (true) {
 
-            const isVolume =
-                volumeRatio >= 2;
-
-            if (
-                isPump ||
-                isRSI ||
-                isVolume
-            ) {
-
-                // 防止重复报警
                 const now = Date.now();
 
                 const lastAlert =
@@ -265,7 +251,8 @@ async function scanMarket() {
 
                 if (
                     lastAlert &&
-                    now - lastAlert < 30 * 60 * 1000
+                    now - lastAlert <
+                    30 * 60 * 1000
                 ) {
                     continue;
                 }
@@ -274,7 +261,6 @@ async function scanMarket() {
 
                 console.log(`🚨 ${symbol} 异动`);
 
-                // AI分析
                 const analysis =
                     await aiAnalysis(
                         symbol,
@@ -289,13 +275,13 @@ async function scanMarket() {
 💰 价格:
 ${last}
 
-📈 5分钟涨跌:
+📈 涨跌:
 ${change.toFixed(2)}%
 
 📊 RSI:
 ${rsi.toFixed(2)}
 
-🔥 成交量倍数:
+🔥 成交量:
 ${volumeRatio.toFixed(2)}x
 
 🤖 AI分析:
@@ -326,7 +312,7 @@ bot.onText(/\/start/, (msg) => {
     bot.sendMessage(
         msg.chat.id,
 `
-🤖 AI合约监控Agent
+🤖 AI交易Agent
 
 功能：
 
@@ -337,6 +323,7 @@ bot.onText(/\/start/, (msg) => {
 ✅ Telegram自动推送
 
 自动扫描：
+
 BTC
 ETH
 SOL
@@ -348,7 +335,7 @@ MEME
 });
 
 // =========================
-// 手动聊天
+// AI聊天
 // =========================
 bot.on('message', async (msg) => {
 
@@ -371,7 +358,7 @@ bot.on('message', async (msg) => {
             await openai.chat.completions.create({
 
                 model:
-                    'deepseek/deepseek-chat-v3-0324:free',
+                    'openai/gpt-3.5-turbo',
 
                 messages: [
 
@@ -401,7 +388,7 @@ bot.on('message', async (msg) => {
 
     } catch (e) {
 
-        console.log(e.message);
+        console.log('❌ 聊天错误:', e.message);
 
         await bot.sendMessage(
             chatId,
@@ -411,13 +398,13 @@ bot.on('message', async (msg) => {
 });
 
 // =========================
-// 每5分钟扫描一次
+// 每30秒扫描一次
 // =========================
 setInterval(() => {
 
     scanMarket();
 
-}, 5 * 60 * 1000);
+}, 30 * 1000);
 
 // =========================
 // 启动立即扫描
@@ -428,6 +415,7 @@ scanMarket();
 // Render 保活
 // =========================
 const server = http.createServer((req, res) => {
+
     res.end('ok');
 });
 
