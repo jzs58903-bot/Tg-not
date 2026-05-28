@@ -59,7 +59,7 @@ async function analyzeCoin(symbol) {
     const aiRes = await axios.post(
       "https://openrouter.ai/api/v1/chat/completions",
       {
-        model: "deepseek/deepseek-chat",
+        model: "openai/gpt-3.5-turbo",
         messages: [
           {
             role: "user",
