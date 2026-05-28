@@ -1,223 +1,128 @@
+require("dotenv").config();
+
 const TelegramBot = require("node-telegram-bot-api");
 const axios = require("axios");
-const OpenAI = require("openai");
-const http = require("http");
+const express = require("express");
 
-// =========================
-// 环境变量
-// =========================
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const CHAT_ID = process.env.CHAT_ID;
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
-if (!BOT_TOKEN || !OPENAI_API_KEY) {
+if (!BOT_TOKEN || !CHAT_ID || !OPENROUTER_API_KEY) {
   console.log("❌ 缺少环境变量");
   process.exit(1);
 }
 
-// =========================
-// Telegram Bot
-// =========================
 const bot = new TelegramBot(BOT_TOKEN, {
   polling: true,
 });
 
-// =========================
-// OpenAI
-// =========================
-const openai = new OpenAI({
-  apiKey: OPENAI_API_KEY,
+const app = express();
+
+app.get("/", (req, res) => {
+  res.send("Bot Running");
 });
 
-// =========================
-// 获取币安数据
-// =========================
-async function getMarketData(symbol) {
+app.listen(3000, () => {
+  console.log("🌐 Web Server Running");
+});
+
+console.log("🤖 Telegram Bot Running");
+
+async function analyzeCoin(symbol) {
   try {
-    const pair = symbol.toUpperCase() + "USDT";
+    const pair = `${symbol.toUpperCase()}USDT`;
 
-    // 24h数据
-    const ticker = await axios.get(
-      `https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=${pair}`
-    );
+    const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${pair}&interval=15m&limit=50`;
 
-    // K线数据
-    const klines = await axios.get(
-      `https://fapi.binance.com/fapi/v1/klines?symbol=${pair}&interval=1h&limit=100`
-    );
+    const response = await axios.get(url);
 
-    const closes = klines.data.map((k) => parseFloat(k[4]));
+    const candles = response.data;
 
-    return {
-      symbol: pair,
-      price: parseFloat(ticker.data.lastPrice),
-      change: parseFloat(ticker.data.priceChangePercent),
-      volume: parseFloat(ticker.data.quoteVolume),
-      closes,
-    };
-  } catch (err) {
-    console.log("Binance错误:", err.message);
-    return null;
-  }
-}
+    if (!candles || candles.length === 0) {
+      return "❌ 获取行情失败";
+    }
 
-// =========================
-// RSI计算
-// =========================
-function calculateRSI(closes, period = 14) {
-  if (closes.length < period + 1) return 50;
+    const closes = candles.map(c => parseFloat(c[4]));
 
-  let gains = 0;
-  let losses = 0;
+    const lastPrice = closes[closes.length - 1];
+    const prevPrice = closes[closes.length - 2];
 
-  for (let i = closes.length - period; i < closes.length; i++) {
-    const diff = closes[i] - closes[i - 1];
+    const change =
+      (((lastPrice - prevPrice) / prevPrice) * 100).toFixed(2);
 
-    if (diff >= 0) gains += diff;
-    else losses -= diff;
-  }
+    let trend = "震荡";
 
-  if (losses === 0) return 100;
+    if (change > 1) trend = "强势上涨 🚀";
+    if (change < -1) trend = "弱势下跌 📉";
 
-  const rs = gains / losses;
+    const aiRes = await axios.post(
+      "https://openrouter.ai/api/v1/chat/completions",
+      {
+        model: "deepseek/deepseek-chat",
+        messages: [
+          {
+            role: "user",
+            content: `
+分析 ${pair} 当前行情：
 
-  return 100 - 100 / (1 + rs);
-}
+最新价格：${lastPrice}
+涨跌幅：${change}%
+趋势：${trend}
 
-// =========================
-// AI分析
-// =========================
-async function aiAnalysis(symbol) {
-  const data = await getMarketData(symbol);
-
-  if (!data) {
-    return "❌ 币种不存在或获取数据失败";
-  }
-
-  const rsi = calculateRSI(data.closes);
-
-  const prompt = `
-你是专业加密货币合约分析师。
-
-分析以下数据：
-
-币种：${data.symbol}
-
-当前价格：${data.price}
-
-24小时涨跌：${data.change}%
-
-成交额：${Math.round(data.volume)}
-
-RSI：${rsi.toFixed(2)}
-
-请返回：
-
-1. 市场趋势
+请给出：
+1. 趋势分析
 2. 做多还是做空
-3. 风险等级
-4. 支撑位
-5. 压力位
-6. 短线建议
+3. 风险提示
+4. 简短建议
+`,
+          },
+        ],
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
 
-回答必须专业、简洁、像交易员。
+    const aiText =
+      aiRes.data.choices[0].message.content;
+
+    return `
+📊 ${pair} AI行情分析
+
+💰 最新价格：${lastPrice}
+📈 涨跌幅：${change}%
+📌 趋势：${trend}
+
+🤖 AI分析：
+
+${aiText}
 `;
-
-  try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content:
-            "你是顶级加密货币交易员，擅长短线合约、趋势分析、市场情绪。",
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-    });
-
-    return completion.choices[0].message.content;
   } catch (err) {
-    console.log("OpenAI错误:", err.message);
+    console.log(err.response?.data || err.message);
+
     return "❌ AI分析失败";
   }
 }
 
-// =========================
-// /start
-// =========================
-bot.onText(/\/start/, (msg) => {
-  bot.sendMessage(
-    msg.chat.id,
-`
-🤖 AI合约分析机器人
+bot.on("message", async msg => {
+  const chatId = msg.chat.id;
 
-直接发送币种即可：
-
-BTC
-ETH
-SOL
-DOGE
-PEPE
-
-功能：
-
-✅ Binance合约行情
-✅ AI趋势分析
-✅ RSI指标
-✅ 做多/做空建议
-✅ 风险评级
-✅ 支撑压力位
-`
-  );
-});
-
-// =========================
-// 消息监听
-// =========================
-bot.on("message", async (msg) => {
-  const text = msg.text;
+  const text = msg.text?.toLowerCase();
 
   if (!text) return;
 
-  // 跳过命令
-  if (text.startsWith("/")) return;
+  const loading = await bot.sendMessage(
+    chatId,
+    "🤖 AI分析中..."
+  );
 
-  const chatId = msg.chat.id;
+  const result = await analyzeCoin(text);
 
-  // 清理输入
-  const symbol = text
-    .replace("分析", "")
-    .replace("币", "")
-    .replace(/\s/g, "")
-    .toUpperCase();
+  bot.deleteMessage(chatId, loading.message_id);
 
-  await bot.sendMessage(chatId, "🤖 AI分析中...");
-
-  const result = await aiAnalysis(symbol);
-
-  await bot.sendMessage(chatId, result);
+  bot.sendMessage(chatId, result);
 });
-
-// =========================
-// 错误监听
-// =========================
-bot.on("polling_error", (err) => {
-  console.log("polling_error:", err.message);
-});
-
-// =========================
-// 启动
-// =========================
-console.log("🚀 AI交易机器人启动");
-
-// =========================
-// Render保活
-// =========================
-http
-  .createServer((req, res) => {
-    res.end("ok");
-  })
-  .listen(process.env.PORT || 3000);
